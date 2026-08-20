@@ -9,6 +9,8 @@ import plotly.graph_objects as go
 import requests
 import streamlit as st
 
+import chart as ch
+
 API = "https://api.hyperliquid.xyz/info"
 LB = "https://stats-data.hyperliquid.xyz/Mainnet/leaderboard"
 DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
@@ -77,6 +79,14 @@ def live_positions(addrs, coin):
     return pd.DataFrame(res)
 
 
+@st.cache_data(ttl=180, show_spinner=False)
+def get_candles(coin, days):
+    try:
+        return ch.candles(coin, "1h", days)
+    except Exception:
+        return pd.DataFrame()
+
+
 def load_csv(name):
     p = os.path.join(DATA, name)
     if not os.path.exists(p):
@@ -137,57 +147,39 @@ e2.metric("숏 가중평균 진입가", f"${ws:,.0f}" if ws == ws else "-",
           f"현재가 대비 {(mark/ws-1)*100:+.2f}%" if ws == ws else "")
 
 st.divider()
-g1, g2 = st.columns(2)
 
-lo, hi = mark * 0.55, mark * 1.45
-bins = np.linspace(lo, hi, 45)
+# ══ 가격 차트 + 고래 진입/청산 ══
+h1, h2 = st.columns([4, 1])
+h1.subheader("가격 · 고래 진입/청산 지점")
+days = h2.select_slider("기간", [3, 7, 14, 30], value=14,
+                        format_func=lambda d: f"{d}일", label_visibility="collapsed")
+cd = get_candles(coin, days)
+ev = load_csv(f"events_{coin}.csv")
 
-f1 = go.Figure()
-for g, col, nm in [(L, GREEN, "롱"), (Sh, RED, "숏")]:
-    if len(g):
-        h, _ = np.histogram(g.entryPx.clip(lo, hi), bins=bins, weights=g.notional/1e6)
-        f1.add_bar(x=(bins[:-1]+bins[1:])/2, y=h, name=f"{nm} ({len(g)})",
-                   marker_color=col, opacity=.8)
-f1.add_vline(x=mark, line_dash="dash", line_color="white",
-             annotation_text=f"현재 {mark:,.0f}")
-f1.update_layout(title="진입가 분포 ($M)", barmode="overlay", height=380,
-                 margin=dict(l=10, r=10, t=40, b=10))
-g1.plotly_chart(f1, width="stretch")
+if cd.empty:
+    st.warning("캔들 데이터를 불러오지 못했습니다.")
+else:
+    st.plotly_chart(ch.price_chart(coin, cd, ev, pos, mark), use_container_width=True)
+    st.caption("▲ 롱 진입 · ▼ 숏 진입 · ✕ 청산/축소 — 마커 크기 = 포지션 규모 "
+               "· 점선 = 고래 가중평균 진입가. 마우스를 올리면 고래 수와 금액이 나옵니다.")
 
-f2 = go.Figure()
-for g, col, nm in [(L, GREEN, "롱 청산"), (Sh, RED, "숏 청산")]:
-    q = g[(g.liqPx > lo) & (g.liqPx < hi)]
-    if len(q):
-        h, _ = np.histogram(q.liqPx, bins=bins, weights=q.notional/1e6)
-        f2.add_bar(x=(bins[:-1]+bins[1:])/2, y=h, name=f"{nm} ({len(q)})",
-                   marker_color=col, opacity=.8)
-f2.add_vline(x=mark, line_dash="dash", line_color="white",
-             annotation_text=f"현재 {mark:,.0f}")
-f2.update_layout(title="청산가 밀집 구간 ($M)", barmode="overlay", height=380,
-                 margin=dict(l=10, r=10, t=40, b=10))
-g2.plotly_chart(f2, width="stretch")
+# ══ 청산 지도 ══
+st.subheader("청산 지도")
+lm = ch.liq_map(coin, pos, mark)
+if lm is not None:
+    st.plotly_chart(lm, use_container_width=True)
+    dn = pos[(pos.szi > 0) & (pos.liqPx >= mark * 0.75) & (pos.liqPx < mark)].notional.sum()
+    up = pos[(pos.szi < 0) & (pos.liqPx <= mark * 1.25) & (pos.liqPx > mark)].notional.sum()
+    st.caption(f"현재가에서 **25% 하락** 시 롱 **${dn/1e6:,.0f}M** 청산 · "
+               f"**25% 상승** 시 숏 **${up/1e6:,.0f}M** 청산. "
+               "고래 대부분이 3~5배 저레버리지라 청산가가 멀리 있습니다.")
 
 # ── 이력 차트 ──
 agg = load_csv(f"agg_{coin}.csv")
 if len(agg) > 1:
-    st.subheader("수집 이력")
-    h1, h2 = st.columns(2)
-    fa = go.Figure()
-    fa.add_scatter(x=agg.ts, y=agg.long_ntl/1e6, name="롱 $M", line_color=GREEN)
-    fa.add_scatter(x=agg.ts, y=agg.short_ntl/1e6, name="숏 $M", line_color=RED)
-    fa.update_layout(title="고래 롱/숏 명목가 추이", height=320,
-                     margin=dict(l=10, r=10, t=40, b=10))
-    h1.plotly_chart(fa, width="stretch")
-
-    fb = go.Figure()
-    fb.add_scatter(x=agg.ts, y=agg.mark, name="가격", line_color=GREY)
-    fb.add_scatter(x=agg.ts, y=agg.wavg_entry_long, name="롱 평균진입",
-                   line=dict(color=GREEN, dash="dot"))
-    fb.add_scatter(x=agg.ts, y=agg.wavg_entry_short, name="숏 평균진입",
-                   line=dict(color=RED, dash="dot"))
-    fb.update_layout(title="가격 vs 고래 평균 진입가", height=320,
-                     margin=dict(l=10, r=10, t=40, b=10))
-    h2.plotly_chart(fb, width="stretch")
+    st.plotly_chart(ch.flow_chart(agg), use_container_width=True)
+elif len(agg) == 1:
+    st.info("스냅샷이 1개뿐입니다. 30분마다 자동 수집되니 잠시 후 추이가 나타납니다.")
 
 # ── 이벤트 ──
 ev = load_csv(f"events_{coin}.csv")
