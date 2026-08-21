@@ -2,7 +2,7 @@ name: whale-snapshot
 
 on:
   schedule:
-    - cron: "*/30 * * * *"      # 30분마다 (UTC)
+    - cron: "7,37 * * * *"     # 매시 7분·37분 (정각 혼잡 회피)
   workflow_dispatch:            # 수동 실행 버튼
 
 concurrency:

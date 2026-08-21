@@ -141,10 +141,11 @@ k[4].metric("롱 비중", f"{ln/(ln+sn)*100:.1f}%" if ln+sn else "-",
             f"순 {pos.szi.sum():+,.1f} {coin}")
 
 e1, e2 = st.columns(2)
+# 손익 부호는 방향 기준: 롱은 (현재/진입-1), 숏은 그 반대
 e1.metric("롱 가중평균 진입가", f"${wl:,.0f}" if wl == wl else "-",
-          f"현재가 대비 {(mark/wl-1)*100:+.2f}%" if wl == wl else "")
+          f"손익 {(mark/wl-1)*100:+.2f}%" if wl == wl else "")
 e2.metric("숏 가중평균 진입가", f"${ws:,.0f}" if ws == ws else "-",
-          f"현재가 대비 {(mark/ws-1)*100:+.2f}%" if ws == ws else "")
+          f"손익 {-(mark/ws-1)*100:+.2f}%" if ws == ws else "")
 
 st.divider()
 
