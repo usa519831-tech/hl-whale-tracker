@@ -223,11 +223,79 @@ if lm is not None:
                "고래 대부분이 3~5배 저레버리지라 청산가가 멀리 있습니다.")
 
 # ── 이력 차트 ──
+st.subheader("고래 롱/숏 명목가 추이")
 agg = load_csv(f"agg_{coin}.csv")
+
 if len(agg) > 1:
-    st.plotly_chart(ch.flow_chart(agg), use_container_width=True)
+    st.plotly_chart(ch.flow_chart(agg), use_container_width=True,
+                    config={"scrollZoom": True, "displaylogo": False,
+                            "doubleClick": "reset",
+                            "modeBarButtonsToRemove": ["select2d", "lasso2d",
+                                                       "toggleSpikelines", "autoScale2d"]})
+
+    a0, a1 = agg.iloc[0], agg.iloc[-1]
+    hrs = (a1.ts - a0.ts).total_seconds() / 3600
+    d_px = (a1.mark / a0.mark - 1) * 100
+    d_l = (a1.long_ntl / a0.long_ntl - 1) * 100 if a0.long_ntl else 0
+    d_s = (a1.short_ntl / a0.short_ntl - 1) * 100 if a0.short_ntl else 0
+
+    st.caption(f"측정 구간 {a0.ts:%m-%d %H:%M} ~ {a1.ts:%m-%d %H:%M} UTC ({hrs:.0f}시간) · "
+               f"스냅샷 {len(agg)}개")
+
+    m = st.columns(4)
+    m[0].metric("가격", f"${a1.mark:,.0f}", f"{d_px:+.2f}%")
+    m[1].metric("롱 명목가", f"${a1.long_ntl/1e6:,.0f}M", f"{d_l:+.1f}%")
+    m[2].metric("숏 명목가", f"${a1.short_ntl/1e6:,.0f}M", f"{d_s:+.1f}%")
+    m[3].metric("실질 증감 (롱−숏)", f"{(d_l-d_px) - (d_s-d_px):+.1f}%p",
+                f"롱 {d_l-d_px:+.1f} · 숏 {d_s-d_px:+.1f}", delta_color="off")
+
+    # 자동 해석
+    net_l, net_s = d_l - d_px, d_s - d_px
+    if abs(net_l - net_s) < 3:
+        verdict = "양쪽이 비슷하게 움직였습니다 — 뚜렷한 쏠림 없음"
+    elif net_s > net_l:
+        verdict = (f"**숏이 롱보다 {net_s-net_l:.0f}%p 더 늘었습니다.** "
+                   f"가격이 {'올랐는데도' if d_px > 0 else '내리는 가운데'} 숏이 붙고 있습니다")
+    else:
+        verdict = (f"**롱이 숏보다 {net_l-net_s:.0f}%p 더 늘었습니다.** "
+                   f"가격이 {'오르는 흐름에 롱이 따라붙고' if d_px > 0 else '내렸는데도 롱이 들어오고'} 있습니다")
+    st.info(f"📊 {verdict}")
+
+    with st.expander("이 차트 읽는 법"):
+        st.markdown(f"""
+**명목가(notional)** 는 `보유수량 × 현재가`입니다. 증거금이 아니라
+**실제 시장에 걸려 있는 금액**입니다.
+
+그래서 선이 올라가는 데는 두 가지 원인이 섞여 있습니다.
+
+1. 고래가 **포지션을 늘렸다** (진짜 신호)
+2. 수량은 그대로인데 **가격이 올라서** 명목가가 커졌다 (착시)
+
+둘을 가르려면 가격 변화를 빼야 합니다. 위 카드의 **실질 증감**이 그 값입니다.
+
+```
+실질 증감 = 명목가 변화% − 가격 변화%
+```
+
+현재 구간: 가격 {d_px:+.2f}% · 롱 명목 {d_l:+.1f}% → 실질 **{net_l:+.1f}%**
+　　　　　　　　　　　　　 숏 명목 {d_s:+.1f}% → 실질 **{net_s:+.1f}%**
+
+**같이 보면 좋은 것**
+
+- **미실현 손익** — 어느 쪽이 물려 있는지. 손실 중인데 명목가가 늘면 물타기입니다
+- **가중평균 진입가** — 오르고 있으면 더 높은 가격에 신규 진입이 계속 들어온다는 뜻
+- **전체 OI 대비 비중** — 고래가 시장에서 차지하는 몫. 이게 커지면 개미가 빠지고 고래가 채우는 국면
+
+**주의**
+
+명목가는 **조회 대상 고래 수**에 비례합니다. 계정 규모 기준(`$10M+` / `$5M+`)을
+바꾸면 값이 통째로 달라지므로, 추이를 볼 때는 같은 기준으로 모인 구간만 비교하세요.
+수집기는 항상 `$5M` 기준으로 저장합니다.
+""")
 elif len(agg) == 1:
-    st.info("스냅샷이 1개뿐입니다. 30분마다 자동 수집되니 잠시 후 추이가 나타납니다.")
+    st.info("스냅샷이 1개뿐입니다. 5분마다 자동 수집되니 잠시 후 추이가 나타납니다.")
+else:
+    st.info("수집된 이력이 아직 없습니다.")
 
 # ── 이벤트 ──
 ev = load_csv(f"events_{coin}.csv")
