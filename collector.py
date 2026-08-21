@@ -25,7 +25,7 @@ DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 COINS = [c.strip() for c in os.getenv("COINS", "BTC,ETH,SOL").split(",") if c.strip()]
 MIN_VALUE = float(os.getenv("MIN_VALUE", "5e6"))
 MAX_ACCOUNTS = int(os.getenv("MAX_ACCOUNTS", "800"))
-WORKERS = int(os.getenv("WORKERS", "6"))
+WORKERS = int(os.getenv("WORKERS", "12"))
 
 S = requests.Session()
 S.headers.update({"Content-Type": "application/json"})
@@ -114,6 +114,9 @@ def main():
     lb = leaderboard()
     sel = lb[lb.av >= MIN_VALUE].head(MAX_ACCOUNTS)
     print(f"  대상 계정 {len(sel):,}개 (합계 ${sel.av.sum()/1e9:.2f}B)")
+
+    # 앱이 36MB 리더보드를 매번 받지 않도록 상위 계정만 캐시
+    sel.head(1500).to_csv(f"{DATA}/leaderboard_top.csv", index=False)
 
     ctx = market_ctx()
     pos = fetch_all(sel.addr.tolist())

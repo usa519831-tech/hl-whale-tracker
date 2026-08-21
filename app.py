@@ -9,6 +9,7 @@ import plotly.graph_objects as go
 import requests
 import streamlit as st
 import streamlit.components.v1 as components
+from streamlit_autorefresh import st_autorefresh
 
 import chart as ch
 import tv
@@ -34,7 +35,7 @@ def post(body, tries=3):
     return None
 
 
-@st.cache_data(ttl=120)
+@st.cache_data(ttl=20)
 def market_ctx():
     j = post({"type": "metaAndAssetCtxs"})
     if not j:
@@ -47,15 +48,21 @@ def market_ctx():
             for i, u in enumerate(meta["universe"])}
 
 
-@st.cache_data(ttl=1800)
+@st.cache_data(ttl=3600)
 def top_accounts(min_value, cap):
-    rows = requests.get(LB, timeout=180).json()["leaderboardRows"]
-    df = pd.DataFrame([{"addr": x["ethAddress"], "av": float(x["accountValue"])}
-                       for x in rows]).sort_values("av", ascending=False)
+    """수집기가 저장한 상위 계정 캐시를 우선 사용 (36MB 다운로드 회피)"""
+    p = os.path.join(DATA, "leaderboard_top.csv")
+    if os.path.exists(p):
+        df = pd.read_csv(p)
+    else:
+        rows = requests.get(LB, timeout=180).json()["leaderboardRows"]
+        df = pd.DataFrame([{"addr": x["ethAddress"], "av": float(x["accountValue"])}
+                           for x in rows])
+    df = df.sort_values("av", ascending=False)
     return df[df.av >= min_value].head(cap)
 
 
-@st.cache_data(ttl=300, show_spinner="고래 포지션 조회 중…")
+@st.cache_data(ttl=25, show_spinner="고래 포지션 조회 중…")
 def live_positions(addrs, coin):
     def one(a):
         j = post({"type": "clearinghouseState", "user": a})
@@ -75,7 +82,7 @@ def live_positions(addrs, coin):
                         "lev": q["leverage"]["value"]})
         return out
     res = []
-    with ThreadPoolExecutor(6) as ex:
+    with ThreadPoolExecutor(16) as ex:
         for r in ex.map(one, addrs):
             res.extend(r)
     return pd.DataFrame(res)
@@ -109,19 +116,31 @@ c1, c2, c3 = st.columns([1, 1, 2])
 coin = c1.selectbox("종목", coins)
 minv = c2.selectbox("계정 규모", [("$10M+", 10e6), ("$5M+", 5e6), ("$1M+", 1e6)],
                     format_func=lambda x: x[0])[1]
-mode = c3.radio("데이터", ["실시간 조회", "수집된 이력"], horizontal=True)
+mode = c3.radio("데이터", ["수집된 이력 (빠름)", "실시간 조회"], horizontal=True,
+                help="수집된 이력은 30분마다 자동 저장된 스냅샷이라 즉시 열립니다. "
+                     "실시간 조회는 지금 이 순간을 보지만 10초 안팎 걸립니다.")
 
 m = ctx.get(coin, {})
 mark = m.get("mark", np.nan)
 
+AUTO = {"끄기": 0, "30초": 30, "1분": 60, "3분": 180, "5분": 300}
 if mode == "실시간 조회":
+    a1, a2 = st.columns([1, 4])
+    sec = AUTO[a1.selectbox("자동 갱신", list(AUTO), index=2)]
+    if sec:
+        n = st_autorefresh(interval=sec * 1000, key="auto")
+        a2.caption(f"⟳ {sec}초마다 자동 갱신 중 · 이번 세션 {n}회 · "
+                   f"{pd.Timestamp.now(tz='Asia/Seoul'):%H:%M:%S} 기준 "
+                   "(브라우저 탭이 열려 있는 동안만 동작합니다)")
     acc = top_accounts(minv, 800)
-    st.caption(f"대상 계정 {len(acc):,}개 · 합계 ${acc.av.sum()/1e9:.2f}B")
     pos = live_positions(tuple(acc.addr.tolist()), coin)
+    st.caption(f"실시간 · 대상 계정 {len(acc):,}개 · 합계 ${acc.av.sum()/1e9:.2f}B")
 else:
     pos = load_csv(f"positions_{coin}.csv")
     if not pos.empty:
-        st.caption(f"최종 수집 {pos.ts.max():%Y-%m-%d %H:%M} UTC")
+        age = (pd.Timestamp.now(tz="UTC") - pos.ts.max()).total_seconds() / 60
+        st.caption(f"수집 스냅샷 · {pos.ts.max():%m-%d %H:%M} UTC ({age:.0f}분 전) "
+                   f"· 5분마다 자동 수집")
 
 if pos.empty:
     st.warning("포지션 데이터가 없습니다. 수집기를 먼저 실행하세요.")
@@ -191,7 +210,12 @@ with tab2:
 st.subheader("청산 지도")
 lm = ch.liq_map(coin, pos, mark)
 if lm is not None:
-    st.plotly_chart(lm, use_container_width=True)
+    st.plotly_chart(lm, use_container_width=True,
+                    config={"scrollZoom": True, "displaylogo": False,
+                            "doubleClick": "reset", "displayModeBar": True,
+                            "modeBarButtonsToRemove": ["select2d", "lasso2d",
+                                                       "toggleSpikelines", "autoScale2d"],
+                            "toImageButtonOptions": {"format": "png", "scale": 2}})
     dn = pos[(pos.szi > 0) & (pos.liqPx >= mark * 0.75) & (pos.liqPx < mark)].notional.sum()
     up = pos[(pos.szi < 0) & (pos.liqPx <= mark * 1.25) & (pos.liqPx > mark)].notional.sum()
     st.caption(f"현재가에서 **25% 하락** 시 롱 **${dn/1e6:,.0f}M** 청산 · "

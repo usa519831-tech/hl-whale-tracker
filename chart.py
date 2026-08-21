@@ -150,7 +150,7 @@ def price_chart(coin, cd, ev, pos, mark, height=640, freq="1h"):
     o, h, l, c = cd.o.iloc[-1], cd.h.iloc[-1], cd.l.iloc[-1], cd.c.iloc[-1]
     chg = (c / o - 1) * 100
     fig.add_annotation(
-        x=0, y=1.005, xref="paper", yref="paper", xanchor="left", yanchor="bottom",
+        x=0, y=1.012, xref="paper", yref="paper", xanchor="left", yanchor="bottom",
         showarrow=False, align="left", font=dict(size=11, color=TXT),
         text=(f"<b>{coin}</b>  ·  {freq}    "
               f"O <span style='color:{lc}'>{o:,.1f}</span>  "
@@ -172,7 +172,7 @@ def price_chart(coin, cd, ev, pos, mark, height=640, freq="1h"):
                            font=dict(size=9, color=DN), bgcolor="rgba(19,23,34,0.75)")
 
     fig.update_layout(
-        height=height, margin=dict(l=6, r=100, t=52, b=44),
+        height=height, margin=dict(l=6, r=100, t=66, b=44),
         hovermode="x unified", dragmode="pan", bargap=0.15,
         # 범례를 하단으로 내려 상단 OHLC 정보와 겹치지 않게 (모바일 대응)
         legend=dict(orientation="h", yanchor="top", y=-0.09, x=0,
@@ -180,6 +180,7 @@ def price_chart(coin, cd, ev, pos, mark, height=640, freq="1h"):
                     itemwidth=30, itemsizing="constant"),
         hoverlabel=dict(bgcolor="#1e222d", bordercolor=GRID,
                         font=dict(color=TXT, size=11)),
+        uirevision=f"{coin}-{freq}",   # 확대/이동 상태 유지
         xaxis_rangeslider_visible=False, **BASE)
 
     # TradingView식 축: 우측 가격축 + 십자선
@@ -197,8 +198,8 @@ def price_chart(coin, cd, ev, pos, mark, height=640, freq="1h"):
     return fig
 
 
-def liq_map(coin, pos, mark, height=460, span=0.55):
-    """청산 지도 — 가격대별 청산 대기 물량 (레버리지가 낮아 범위를 넓게 잡음)"""
+def liq_map(coin, pos, mark, height=620, span=0.55):
+    """청산 지도 — 상단: 가격대별 물량 / 하단: 현재가로부터의 거리별 누적 (세로 배치=모바일 대응)"""
     if pos is None or not len(pos):
         return None
     L, S = pos[pos.szi > 0], pos[pos.szi < 0]
@@ -206,10 +207,10 @@ def liq_map(coin, pos, mark, height=460, span=0.55):
     bins = np.linspace(lo, hi, 61)
     ctr = (bins[:-1] + bins[1:]) / 2
 
-    fig = make_subplots(rows=1, cols=2, column_widths=[0.62, 0.38],
-                        horizontal_spacing=0.10,
-                        subplot_titles=("가격대별 청산 대기 물량",
-                                        "현재가로부터의 거리별 누적"))
+    fig = make_subplots(rows=2, cols=1, row_heights=[0.60, 0.40],
+                        vertical_spacing=0.20,
+                        subplot_titles=("가격대별 청산 대기 물량 ($M)",
+                                        "현재가에서 % 만큼 움직였을 때 누적 청산액 ($M)"))
     for g, col, nm in [(L, UP, "롱 청산"), (S, DN, "숏 청산")]:
         q = g[(g.liqPx > lo) & (g.liqPx < hi)]
         if not len(q):
@@ -219,36 +220,48 @@ def liq_map(coin, pos, mark, height=460, span=0.55):
                     opacity=.88, width=(bins[1] - bins[0]) * .92,
                     hovertemplate=nm + " $%{x:.1f}M<br>$%{y:,.0f}<extra></extra>",
                     row=1, col=1)
-    fig.add_hline(y=mark, line=dict(color="white", dash="dash", width=1.4),
-                  annotation_text=f"현재 ${mark:,.0f}", annotation_position="right",
-                  annotation_font=dict(size=12, color="white"), row=1, col=1)
+    fig.add_hline(y=mark, line=dict(color="white", dash="dash", width=1.3), row=1, col=1)
+    fig.add_annotation(x=1.001, xref="paper", y=mark, yref="y",
+                       text=f" {mark:,.0f} ", showarrow=False, xanchor="left",
+                       font=dict(size=11, color="#fff"), bgcolor=CROSS, borderpad=3)
 
-    # 거리별 누적 (가격이 x% 움직이면 청산되는 물량)
     steps = np.arange(2.5, 45.1, 2.5)
     dn_cum = [L[(L.liqPx >= mark * (1 - s / 100)) & (L.liqPx < mark)].notional.sum() / 1e6
               for s in steps]
     up_cum = [S[(S.liqPx <= mark * (1 + s / 100)) & (S.liqPx > mark)].notional.sum() / 1e6
               for s in steps]
-    fig.add_scatter(x=-steps, y=dn_cum, name="하락 시 롱청산", line=dict(color=UP, width=2.5),
-                    fill="tozeroy", fillcolor="rgba(38,166,154,0.20)",
-                    hovertemplate="하락 %{x:.1f}% → $%{y:.1f}M 청산<extra></extra>",
-                    row=1, col=2)
-    fig.add_scatter(x=steps, y=up_cum, name="상승 시 숏청산", line=dict(color=DN, width=2.5),
-                    fill="tozeroy", fillcolor="rgba(239,83,80,0.20)",
-                    hovertemplate="상승 %{x:.1f}% → $%{y:.1f}M 청산<extra></extra>",
-                    row=1, col=2)
-    fig.add_vline(x=0, line=dict(color="white", dash="dash", width=1.2), row=1, col=2)
+    fig.add_scatter(x=-steps, y=dn_cum, name="하락 시 롱청산",
+                    line=dict(color=UP, width=2.5), fill="tozeroy",
+                    fillcolor="rgba(38,166,154,0.20)",
+                    hovertemplate="하락 %{x:.1f}% → $%{y:.1f}M<extra></extra>", row=2, col=1)
+    fig.add_scatter(x=steps, y=up_cum, name="상승 시 숏청산",
+                    line=dict(color=DN, width=2.5), fill="tozeroy",
+                    fillcolor="rgba(239,83,80,0.20)",
+                    hovertemplate="상승 %{x:.1f}% → $%{y:.1f}M<extra></extra>", row=2, col=1)
+    fig.add_vline(x=0, line=dict(color="white", dash="dash", width=1.2), row=2, col=1)
 
-    fig.update_layout(height=height, margin=dict(l=8, r=8, t=72, b=8),
-                      barmode="overlay", bargap=.04,
-                      legend=dict(orientation="h", yanchor="bottom", y=1.10, x=0,
-                                  bgcolor="rgba(0,0,0,0)", font=dict(size=11)),
-                      **BASE)
-    fig.update_yaxes(gridcolor=GRID, tickformat=",.0f", row=1, col=1)
-    fig.update_xaxes(gridcolor=GRID, title_text="$M", row=1, col=1)
-    fig.update_yaxes(gridcolor=GRID, title_text="누적 $M", row=1, col=2)
-    fig.update_xaxes(gridcolor=GRID, title_text="현재가 대비 %", ticksuffix="%",
-                     row=1, col=2)
+    fig.update_layout(height=height, margin=dict(l=6, r=70, t=58, b=64),
+                      barmode="overlay", bargap=.04, dragmode="pan",
+                      hoverlabel=dict(bgcolor="#1e222d", bordercolor=GRID,
+                                      font=dict(color=TXT, size=11)),
+                      legend=dict(orientation="h", yanchor="top", y=-0.14, x=0,
+                                  bgcolor="rgba(0,0,0,0)", font=dict(size=10),
+                                  itemwidth=30, itemsizing="constant"),
+                      uirevision=f"liq-{coin}", **BASE)
+    # 축 제목은 소제목에 단위를 넣어 생략 (모바일 공간 확보)
+    fig.update_yaxes(side="right", gridcolor=GRID, tickformat=",.0f",
+                     showspikes=True, spikemode="across", spikethickness=1,
+                     spikedash="dot", spikecolor=CROSS, row=1, col=1)
+    fig.update_xaxes(gridcolor=GRID, showspikes=True, spikemode="across",
+                     spikethickness=1, spikedash="dot", spikecolor=CROSS,
+                     ticksuffix="M", row=1, col=1)
+    fig.update_yaxes(side="right", gridcolor=GRID, row=2, col=1)
+    fig.update_xaxes(gridcolor=GRID, ticksuffix="%", row=2, col=1)
+    # 소제목: 좌측 정렬 (툴바는 우상단이라 충돌 없음)
+    for a in fig.layout.annotations[:2]:
+        a.font.size = 12
+        a.x = 0
+        a.xanchor = "left"
     return fig
 
 
