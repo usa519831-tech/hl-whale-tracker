@@ -99,10 +99,17 @@ def fetch_all(addrs):
 
 
 def append_csv(path, df):
+    """컬럼이 늘거나 줄어도 깨지지 않게 정렬해서 덧붙인다."""
     if df.empty:
         return
-    hdr = not os.path.exists(path)
-    df.to_csv(path, mode="a", header=hdr, index=False)
+    if not os.path.exists(path):
+        df.to_csv(path, index=False)
+        return
+    old = pd.read_csv(path)
+    if list(old.columns) == list(df.columns):
+        df.to_csv(path, mode="a", header=False, index=False)
+    else:                       # 스키마가 바뀐 경우 전체 재작성
+        pd.concat([old, df], ignore_index=True).to_csv(path, index=False)
 
 
 def main():
