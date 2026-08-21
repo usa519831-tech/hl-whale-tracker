@@ -286,3 +286,33 @@ def flow_chart(agg, height=300):
     fig.update_yaxes(showgrid=False, title_text="가격", secondary_y=True)
     fig.update_xaxes(gridcolor=GRID)
     return fig
+
+
+def flow_bars(ev, height=300):
+    """스냅샷별 롱/숏 순증감 ($M). 부호 전환도 양쪽에 정확히 반영."""
+    e = ev.copy()
+    dl = np.maximum(e.szi, 0) - np.maximum(e.szi_prev, 0)      # 롱 증감(BTC)
+    ds = np.maximum(-e.szi, 0) - np.maximum(-e.szi_prev, 0)    # 숏 증감(BTC)
+    e["long_flow"] = dl * e.mark / 1e6
+    e["short_flow"] = ds * e.mark / 1e6
+    g = e.groupby(e.ts.dt.floor("1h"))[["long_flow", "short_flow"]].sum().reset_index()
+    if g.empty:
+        return None
+    fig = go.Figure()
+    fig.add_bar(x=g.ts, y=g.long_flow, name="롱 순증감", marker_color=UP, opacity=.9,
+                hovertemplate="롱 %{y:+.1f}M<extra></extra>")
+    fig.add_bar(x=g.ts, y=g.short_flow, name="숏 순증감", marker_color=DN, opacity=.9,
+                hovertemplate="숏 %{y:+.1f}M<extra></extra>")
+    fig.add_hline(y=0, line=dict(color=TXT, width=1))
+    fig.update_layout(height=height, margin=dict(l=6, r=60, t=36, b=40),
+                      barmode="group", bargap=.25, dragmode="pan",
+                      title=dict(text="시간대별 롱/숏 순증감 ($M)", x=0.01,
+                                 font=dict(size=14)),
+                      legend=dict(orientation="h", yanchor="top", y=-0.12, x=0,
+                                  bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+                      hoverlabel=dict(bgcolor="#1e222d", bordercolor=GRID,
+                                      font=dict(color=TXT, size=11)),
+                      uirevision="flowbars", **BASE)
+    fig.update_yaxes(side="right", gridcolor=GRID, zeroline=False)
+    fig.update_xaxes(gridcolor=GRID)
+    return fig

@@ -134,7 +134,7 @@ if mode == "실시간 조회":
                    "(브라우저 탭이 열려 있는 동안만 동작합니다)")
     acc = top_accounts(minv, 800)
     pos = live_positions(tuple(acc.addr.tolist()), coin)
-    st.caption(f"실시간 · 대상 계정 {len(acc):,}개 · 합계 ${acc.av.sum()/1e9:.2f}B")
+    st.caption(f"실시간 · 대상 계정 {len(acc):,}개 · 합계 \\${acc.av.sum()/1e9:.2f}B")
 else:
     pos = load_csv(f"positions_{coin}.csv")
     if not pos.empty:
@@ -221,8 +221,8 @@ with sec[0]:
                                 "toImageButtonOptions": {"format": "png", "scale": 2}})
         dn = pos[(pos.szi > 0) & (pos.liqPx >= mark * 0.75) & (pos.liqPx < mark)].notional.sum()
         up = pos[(pos.szi < 0) & (pos.liqPx <= mark * 1.25) & (pos.liqPx > mark)].notional.sum()
-        st.caption(f"현재가에서 **25% 하락** 시 롱 **${dn/1e6:,.0f}M** 청산 · "
-                   f"**25% 상승** 시 숏 **${up/1e6:,.0f}M** 청산. "
+        st.caption(f"현재가에서 **25% 하락** 시 롱 **\\${dn/1e6:,.0f}M** 청산 · "
+                   f"**25% 상승** 시 숏 **\\${up/1e6:,.0f}M** 청산. "
                    "고래 대부분이 3~5배 저레버리지라 청산가가 멀리 있습니다.")
 
 
@@ -304,14 +304,66 @@ with sec[1]:
 with sec[2]:
     ev = load_csv(f"events_{coin}.csv")
     if len(ev):
-        st.caption(f"직전 스냅샷 대비 $100K 이상 변화만 기록 · 총 {len(ev):,}건 "
-                   "· OPEN 신규진입 · ADD 증액 · REDUCE 감액 · CLOSE 전량청산")
+        # 롱/숏 증감을 부호 전환까지 정확히 분해
+        _dl = np.maximum(ev.szi, 0) - np.maximum(ev.szi_prev, 0)
+        _ds = np.maximum(-ev.szi, 0) - np.maximum(-ev.szi_prev, 0)
+        lv = (_dl * ev.mark) / 1e6
+        sv = (_ds * ev.mark) / 1e6
+        l_up, l_dn = lv[lv > 0].sum(), -lv[lv < 0].sum()
+        s_up, s_dn = sv[sv > 0].sum(), -sv[sv < 0].sum()
+        l_net, s_net = l_up - l_dn, s_up - s_dn
+        gross = l_up + s_up
+
+        f = st.columns(4)
+        f[0].metric("롱 증가", f"${l_up:,.0f}M", f"감소 ${l_dn:,.0f}M", delta_color="off")
+        f[1].metric("숏 증가", f"${s_up:,.0f}M", f"감소 ${s_dn:,.0f}M", delta_color="off")
+        f[2].metric("롱 순증감", f"${l_net:+,.0f}M",
+                    f"신규 매수 비중 {l_up/gross*100:.0f}%" if gross else "-",
+                    delta_color="off")
+        f[3].metric("숏 순증감", f"${s_net:+,.0f}M",
+                    f"신규 매도 비중 {s_up/gross*100:.0f}%" if gross else "-",
+                    delta_color="off")
+
+        # 롱 vs 숏 신규 진입 비율 막대
+        if gross > 0:
+            lp = l_up / gross * 100
+            st.markdown(
+                f"""<div style="display:flex;height:26px;border-radius:5px;overflow:hidden;
+                     font-size:12px;font-weight:600;margin:2px 0 10px 0">
+                  <div style="width:{lp:.1f}%;background:#26a69a;color:#0e1117;
+                       display:flex;align-items:center;justify-content:center">
+                       롱 {lp:.0f}%</div>
+                  <div style="width:{100-lp:.1f}%;background:#ef5350;color:#0e1117;
+                       display:flex;align-items:center;justify-content:center">
+                       숏 {100-lp:.0f}%</div>
+                </div>""", unsafe_allow_html=True)
+            if abs(lp - 50) < 5:
+                st.caption("↔ 신규 진입이 롱·숏 비슷하게 갈렸습니다")
+            elif lp > 50:
+                st.caption(f"↑ 신규 진입 금액의 {lp:.0f}%가 **롱** 쪽입니다")
+            else:
+                st.caption(f"↓ 신규 진입 금액의 {100-lp:.0f}%가 **숏** 쪽입니다")
+
+        fb = ch.flow_bars(ev)
+        if fb is not None:
+            st.plotly_chart(fb, use_container_width=True,
+                            config={"scrollZoom": True, "displaylogo": False,
+                                    "doubleClick": "reset",
+                                    "modeBarButtonsToRemove": ["select2d", "lasso2d",
+                                                               "toggleSpikelines",
+                                                               "autoScale2d"]})
+
+        st.caption(f"직전 스냅샷 대비 \\$100K 이상 변화만 기록 · 총 {len(ev):,}건 · "
+                   "OPEN 신규진입 · ADD 증액 · REDUCE 감액 · CLOSE 전량청산 · FLIP 방향전환")
         e = ev.sort_values("ts", ascending=False).head(40).copy()
         e["시각"] = e.ts.dt.strftime("%m-%d %H:%M")
         e["지갑"] = e.addr.str[:10] + ".."
         e["변화"] = e.delta.round(3)
+        e["규모$M"] = (e.delta.abs() * e.mark / 1e6).round(2)
         e["가격"] = e.mark.round(1)
-        st.dataframe(e[["시각", "지갑", "kind", "side", "변화", "가격"]]
+        # 저장된 라벨이 부호 전환을 놓친 경우 보정
+        e.loc[(e.szi_prev * e.szi < 0) & (e.szi_prev != 0) & (e.szi != 0), "kind"] = "FLIP"
+        st.dataframe(e[["시각", "지갑", "kind", "side", "변화", "규모$M", "가격"]]
                      .rename(columns={"kind": "유형", "side": "방향"}),
                      width="stretch", hide_index=True, height=380)
     else:

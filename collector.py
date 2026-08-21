@@ -166,9 +166,11 @@ def main():
             m2["delta"] = m2.szi - m2.szi_prev
             ch = m2[m2.delta.abs() * mark >= 100_000].copy()   # $100K 이상 변화만
             if not ch.empty:
+                # 부호가 뒤집히면 방향 전환(FLIP) — 절대값 비교만 하면 증액으로 오분류됨
                 ch["kind"] = np.where(ch.szi_prev == 0, "OPEN",
                               np.where(ch.szi == 0, "CLOSE",
-                              np.where(ch.szi.abs() > ch.szi_prev.abs(), "ADD", "REDUCE")))
+                              np.where(ch.szi_prev * ch.szi < 0, "FLIP",
+                              np.where(ch.szi.abs() > ch.szi_prev.abs(), "ADD", "REDUCE"))))
                 ch["side"] = np.where(ch.szi > 0, "LONG",
                               np.where(ch.szi < 0, "SHORT",
                               np.where(ch.szi_prev > 0, "LONG", "SHORT")))
