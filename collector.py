@@ -134,6 +134,8 @@ def main():
 
         agg = {
             "ts": ts.isoformat(), "coin": coin, "mark": mark, "oi": oi,
+            # 표본 기준을 함께 기록 — 기준이 바뀌면 명목가 비교가 무의미해짐
+            "min_value": MIN_VALUE, "n_accounts": len(sel),
             "funding": m.get("funding", np.nan), "premium": m.get("premium", np.nan),
             "n_whales": c.addr.nunique(), "n_long": len(L), "n_short": len(Sh),
             "long_sz": L.szi.sum(), "short_sz": -Sh.szi.sum(),
