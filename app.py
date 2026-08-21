@@ -8,8 +8,10 @@ import pandas as pd
 import plotly.graph_objects as go
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 
 import chart as ch
+import tv
 
 API = "https://api.hyperliquid.xyz/info"
 LB = "https://stats-data.hyperliquid.xyz/Mainnet/leaderboard"
@@ -80,9 +82,9 @@ def live_positions(addrs, coin):
 
 
 @st.cache_data(ttl=180, show_spinner=False)
-def get_candles(coin, days):
+def get_candles(coin, interval, bars):
     try:
-        return ch.candles(coin, "1h", days)
+        return ch.candles(coin, interval, bars)
     except Exception:
         return pd.DataFrame()
 
@@ -133,36 +135,49 @@ ws = (Sh.entryPx * Sh.szi.abs()).sum() / Sh.szi.abs().sum() if len(Sh) else np.n
 k = st.columns(5)
 k[0].metric(f"{coin} 현재가", f"${mark:,.0f}",
             f"{(mark/m.get('prevDay', mark)-1)*100:+.2f}% (24h)")
-k[1].metric("추적 고래", f"{pos.addr.nunique()}명",
+k[1].metric("추적 고래", f"{pos.addr.nunique()}명", delta_color="off", delta=
             f"OI의 {pos.szi.abs().sum()/m.get('oi',1)*100:.1f}%")
-k[2].metric("롱", f"${ln/1e6:,.0f}M", f"{len(L)}명 · 미실현 ${L.upnl.sum()/1e6:+.1f}M")
-k[3].metric("숏", f"${sn/1e6:,.0f}M", f"{len(Sh)}명 · 미실현 ${Sh.upnl.sum()/1e6:+.1f}M")
+k[2].metric("롱", f"${ln/1e6:,.0f}M",
+            f"{len(L)}명 · 미실현 ${L.upnl.sum()/1e6:+.1f}M", delta_color="off")
+k[3].metric("숏", f"${sn/1e6:,.0f}M",
+            f"{len(Sh)}명 · 미실현 ${Sh.upnl.sum()/1e6:+.1f}M", delta_color="off")
 k[4].metric("롱 비중", f"{ln/(ln+sn)*100:.1f}%" if ln+sn else "-",
-            f"순 {pos.szi.sum():+,.1f} {coin}")
+            f"순 {pos.szi.sum():+,.1f} {coin}", delta_color="off")
 
 e1, e2 = st.columns(2)
 # 손익 부호는 방향 기준: 롱은 (현재/진입-1), 숏은 그 반대
-e1.metric("롱 가중평균 진입가", f"${wl:,.0f}" if wl == wl else "-",
-          f"손익 {(mark/wl-1)*100:+.2f}%" if wl == wl else "")
-e2.metric("숏 가중평균 진입가", f"${ws:,.0f}" if ws == ws else "-",
-          f"손익 {-(mark/ws-1)*100:+.2f}%" if ws == ws else "")
+e1.metric("롱 가중평균 진입가 · 손익", f"${wl:,.0f}" if wl == wl else "-",
+          f"{(mark/wl-1)*100:+.2f}%" if wl == wl else None)
+e2.metric("숏 가중평균 진입가 · 손익", f"${ws:,.0f}" if ws == ws else "-",
+          f"{-(mark/ws-1)*100:+.2f}%" if ws == ws else None)
 
 st.divider()
 
-# ══ 가격 차트 + 고래 진입/청산 ══
-h1, h2 = st.columns([4, 1])
-h1.subheader("가격 · 고래 진입/청산 지점")
-days = h2.select_slider("기간", [3, 7, 14, 30], value=14,
-                        format_func=lambda d: f"{d}일", label_visibility="collapsed")
-cd = get_candles(coin, days)
-ev = load_csv(f"events_{coin}.csv")
+# ══ 차트 ══
+cc = st.columns([1.1, 1.4, 2.5])
+tf_label = cc[0].selectbox("기간", tv.TF_ORDER, index=tv.TF_ORDER.index("1시간"))
+tv_iv, hl_iv, n_bars = tv.TF[tf_label]
+ex_label = cc[1].selectbox("TradingView 거래소", list(tv.EXCHANGES))
 
-if cd.empty:
-    st.warning("캔들 데이터를 불러오지 못했습니다.")
-else:
-    st.plotly_chart(ch.price_chart(coin, cd, ev, pos, mark), use_container_width=True)
-    st.caption("▲ 롱 진입 · ▼ 숏 진입 · ✕ 청산/축소 — 마커 크기 = 포지션 규모 "
-               "· 점선 = 고래 가중평균 진입가. 마우스를 올리면 고래 수와 금액이 나옵니다.")
+tab1, tab2 = st.tabs(["TradingView 차트", "고래 진입/청산 마커"])
+
+with tab1:
+    sym = tv.tv_symbol(coin, ex_label)
+    st.caption(f"심볼 `{sym}` · {tf_label} — 차트 안에서 지표·그림도구를 자유롭게 쓸 수 있습니다.")
+    components.html(tv.widget_html(sym, tv_iv, height=620), height=640, scrolling=False)
+    st.caption("‘Invalid symbol’ 이 뜨면 위에서 다른 거래소를 선택하세요. "
+               "하이퍼리퀴드는 TradingView 미지원일 수 있습니다.")
+
+with tab2:
+    cd = get_candles(coin, hl_iv, n_bars)
+    ev = load_csv(f"events_{coin}.csv")
+    if cd.empty:
+        st.warning("캔들 데이터를 불러오지 못했습니다.")
+    else:
+        st.plotly_chart(ch.price_chart(coin, cd, ev, pos, mark, freq=hl_iv),
+                        use_container_width=True)
+        st.caption("▲ 롱 진입 · ▼ 숏 진입 · ✕ 청산/축소 — 마커 크기 = 포지션 규모 "
+                   "· 점선 = 고래 가중평균 진입가. 하이퍼리퀴드 실데이터 기준입니다.")
 
 # ══ 청산 지도 ══
 st.subheader("청산 지도")

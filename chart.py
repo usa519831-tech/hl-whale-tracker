@@ -15,11 +15,21 @@ BASE = dict(template="plotly_dark", font=dict(color=TXT, size=12),
             paper_bgcolor="#0e1117", plot_bgcolor="#0e1117")
 
 
-def candles(coin, interval="1h", days=14):
+# 마커 묶음용 floor 주기 (pandas 고정주기만 허용 — W 는 D 로 대체)
+_FLOOR = {"1m": "1min", "5m": "5min", "15m": "15min", "30m": "30min",
+          "1h": "1h", "4h": "4h", "1d": "D", "1w": "D"}
+
+_SEC = {"1m": 60, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600,
+        "4h": 14400, "1d": 86400, "1w": 604800}
+
+
+def candles(coin, interval="1h", bars=168):
+    """interval 은 하이퍼리퀴드 표기( 1m/5m/15m/30m/1h/4h/1d/1w )"""
     now = int(time.time() * 1000)
+    span = _SEC.get(interval, 3600) * bars * 1000
     r = requests.post(API, json={"type": "candleSnapshot", "req": {
         "coin": coin, "interval": interval,
-        "startTime": now - days * 86400 * 1000, "endTime": now}}, timeout=30)
+        "startTime": now - span, "endTime": now}}, timeout=30)
     r.raise_for_status()
     d = pd.DataFrame(r.json())
     if d.empty:
@@ -37,7 +47,7 @@ def _size(v, lo=10, hi=26):
     return lo + np.sqrt(v / np.nanmax(v)) * (hi - lo)
 
 
-def price_chart(coin, cd, ev, pos, mark, height=560):
+def price_chart(coin, cd, ev, pos, mark, height=560, freq="1h"):
     """캔들 + 고래 진입/청산 마커 + 가중평균 진입선"""
     fig = go.Figure()
     fig.add_candlestick(x=cd.t, open=cd.o, high=cd.h, low=cd.l, close=cd.c,
@@ -52,7 +62,7 @@ def price_chart(coin, cd, ev, pos, mark, height=560):
         e = ev[ev.ts >= cd.t.min()].copy()
         if len(e):
             e["ntl"] = e.delta.abs() * e.mark
-            e["slot"] = e.ts.dt.floor("1h")
+            e["slot"] = e.ts.dt.floor(_FLOOR.get(freq, "1h"))
             e["grp"] = np.where(e.kind.isin(["OPEN", "ADD"]), "진입", "청산")
             # 같은 시각·방향·유형은 하나로 합쳐 마커 뭉침 방지
             g = (e.groupby(["slot", "side", "grp"])
