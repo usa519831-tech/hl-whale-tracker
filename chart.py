@@ -72,6 +72,25 @@ def price_chart(coin, cd, ev, pos, mark, height=640, freq="1h"):
 
     lo, hi = cd.l.min(), cd.h.max()
     pad = (hi - lo) * 0.07
+    y0, y1 = lo - pad, hi + pad
+
+    # ── 청산 밀집 음영 (보이는 가격대만) ──
+    out_dn = out_up = 0.0
+    if pos is not None and len(pos):
+        L0, S0 = pos[pos.szi > 0], pos[pos.szi < 0]
+        bins = np.linspace(y0, y1, 33)
+        for g0, rgb in [(L0, "38,166,154"), (S0, "239,83,80")]:
+            q = g0[(g0.liqPx > y0) & (g0.liqPx < y1)]
+            if len(q):
+                hh, ee = np.histogram(q.liqPx, bins=bins, weights=q.notional / 1e6)
+                mx = hh.max() or 1
+                for k in range(len(hh)):
+                    if hh[k] > 0:
+                        fig.add_hrect(y0=ee[k], y1=ee[k + 1], row=1, col=1,
+                                      fillcolor=f"rgba({rgb},{0.05 + 0.33*hh[k]/mx:.2f})",
+                                      line_width=0, layer="below")
+        out_dn = L0[L0.liqPx <= y0].notional.sum() / 1e6
+        out_up = S0[S0.liqPx >= y1].notional.sum() / 1e6
 
     # ── 고래 마커 ──
     if ev is not None and len(ev):
@@ -131,8 +150,8 @@ def price_chart(coin, cd, ev, pos, mark, height=640, freq="1h"):
     o, h, l, c = cd.o.iloc[-1], cd.h.iloc[-1], cd.l.iloc[-1], cd.c.iloc[-1]
     chg = (c / o - 1) * 100
     fig.add_annotation(
-        x=0, y=1, xref="paper", yref="paper", xanchor="left", yanchor="bottom",
-        showarrow=False, align="left", font=dict(size=12, color=TXT),
+        x=0, y=1.005, xref="paper", yref="paper", xanchor="left", yanchor="bottom",
+        showarrow=False, align="left", font=dict(size=11, color=TXT),
         text=(f"<b>{coin}</b>  ·  {freq}    "
               f"O <span style='color:{lc}'>{o:,.1f}</span>  "
               f"H <span style='color:{lc}'>{h:,.1f}</span>  "
@@ -140,11 +159,25 @@ def price_chart(coin, cd, ev, pos, mark, height=640, freq="1h"):
               f"C <span style='color:{lc}'>{c:,.1f}</span>  "
               f"<span style='color:{lc}'>{chg:+.2f}%</span>"))
 
+    # 화면 밖 청산 물량 안내
+    if out_dn > 0:
+        fig.add_annotation(x=0.005, xref="paper", y=y0, yref="y", yanchor="bottom",
+                           xanchor="left", showarrow=False, borderpad=2,
+                           text=f"↓ 아래쪽 롱청산 ${out_dn:,.0f}M",
+                           font=dict(size=9, color=UP), bgcolor="rgba(19,23,34,0.75)")
+    if out_up > 0:
+        fig.add_annotation(x=0.005, xref="paper", y=y1, yref="y", yanchor="top",
+                           xanchor="left", showarrow=False, borderpad=2,
+                           text=f"↑ 위쪽 숏청산 ${out_up:,.0f}M",
+                           font=dict(size=9, color=DN), bgcolor="rgba(19,23,34,0.75)")
+
     fig.update_layout(
-        height=height, margin=dict(l=6, r=104, t=44, b=6),
+        height=height, margin=dict(l=6, r=100, t=52, b=44),
         hovermode="x unified", dragmode="pan", bargap=0.15,
-        legend=dict(orientation="h", yanchor="bottom", y=1.0, x=0.42,
-                    bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+        # 범례를 하단으로 내려 상단 OHLC 정보와 겹치지 않게 (모바일 대응)
+        legend=dict(orientation="h", yanchor="top", y=-0.09, x=0,
+                    bgcolor="rgba(0,0,0,0)", font=dict(size=10),
+                    itemwidth=30, itemsizing="constant"),
         hoverlabel=dict(bgcolor="#1e222d", bordercolor=GRID,
                         font=dict(color=TXT, size=11)),
         xaxis_rangeslider_visible=False, **BASE)
@@ -152,8 +185,8 @@ def price_chart(coin, cd, ev, pos, mark, height=640, freq="1h"):
     # TradingView식 축: 우측 가격축 + 십자선
     fig.update_yaxes(side="right", gridcolor=GRID, zeroline=False,
                      showspikes=True, spikemode="across", spikethickness=1,
-                     spikedash="dot", spikecolor=CROSS,
-                     range=[lo - pad, hi + pad], tickformat=",.0f", row=1, col=1)
+                     spikedash="dot", spikecolor=CROSS, spikesnap="cursor",
+                     range=[y0, y1], tickformat=",.0f", fixedrange=False, row=1, col=1)
     fig.update_yaxes(side="right", gridcolor=GRID, zeroline=False,
                      showticklabels=True, nticks=3, row=2, col=1)
     fig.update_xaxes(gridcolor=GRID, showspikes=True, spikemode="across",

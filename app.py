@@ -174,10 +174,18 @@ with tab2:
     if cd.empty:
         st.warning("캔들 데이터를 불러오지 못했습니다.")
     else:
-        st.plotly_chart(ch.price_chart(coin, cd, ev, pos, mark, freq=hl_iv),
-                        use_container_width=True)
-        st.caption("▲ 롱 진입 · ▼ 숏 진입 · ✕ 청산/축소 — 마커 크기 = 포지션 규모 "
-                   "· 점선 = 고래 가중평균 진입가. 하이퍼리퀴드 실데이터 기준입니다.")
+        st.plotly_chart(
+            ch.price_chart(coin, cd, ev, pos, mark, freq=hl_iv),
+            use_container_width=True,
+            config={"scrollZoom": True, "displaylogo": False,
+                    "doubleClick": "reset", "displayModeBar": True,
+                    "modeBarButtonsToRemove": ["select2d", "lasso2d",
+                                               "toggleSpikelines", "autoScale2d"],
+                    "toImageButtonOptions": {"format": "png", "scale": 2}})
+        st.caption("▲ 롱 진입 · ▼ 숏 진입 · ✕ 청산/축소 — 마커 크기 = 포지션 규모 · "
+                   "가로 음영 = 청산 밀집 구간(진할수록 물량 많음) · 점선 = 고래 평균 진입가")
+        st.caption("📱 모바일: 두 손가락으로 확대/축소, 한 손가락으로 이동, "
+                   "두 번 탭하면 원래대로. PC: 스크롤로 확대, 드래그로 이동")
 
 # ══ 청산 지도 ══
 st.subheader("청산 지도")
