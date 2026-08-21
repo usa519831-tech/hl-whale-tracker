@@ -8,11 +8,14 @@ import requests
 from plotly.subplots import make_subplots
 
 API = "https://api.hyperliquid.xyz/info"
+# TradingView 기본 다크 테마 색상
 UP, DN = "#26a69a", "#ef5350"
+UP_F, DN_F = "rgba(38,166,154,0.45)", "rgba(239,83,80,0.45)"
 WHITE, GOLD = "#e8e8e8", "#ffd54f"
-GRID, TXT = "rgba(255,255,255,0.07)", "#d0d0d0"
+BG, GRID = "#131722", "#2A2E39"
+TXT, CROSS = "#B2B5BE", "#758696"
 BASE = dict(template="plotly_dark", font=dict(color=TXT, size=12),
-            paper_bgcolor="#0e1117", plot_bgcolor="#0e1117")
+            paper_bgcolor=BG, plot_bgcolor=BG)
 
 
 # 마커 묶음용 floor 주기 (pandas 고정주기만 허용 — W 는 D 로 대체)
@@ -40,42 +43,54 @@ def candles(coin, interval="1h", bars=168):
     return d
 
 
-def _size(v, lo=10, hi=26):
+def _size(v, lo=7, hi=19):
     v = np.asarray(v, dtype=float)
     if len(v) == 0 or np.nanmax(v) <= 0:
         return np.full(len(v), lo)
     return lo + np.sqrt(v / np.nanmax(v)) * (hi - lo)
 
 
-def price_chart(coin, cd, ev, pos, mark, height=560, freq="1h"):
-    """캔들 + 고래 진입/청산 마커 + 가중평균 진입선"""
-    fig = go.Figure()
-    fig.add_candlestick(x=cd.t, open=cd.o, high=cd.h, low=cd.l, close=cd.c,
-                        increasing_line_color=UP, decreasing_line_color=DN,
-                        increasing_fillcolor=UP, decreasing_fillcolor=DN,
-                        line_width=1, name="가격", showlegend=False)
+def price_chart(coin, cd, ev, pos, mark, height=640, freq="1h"):
+    """TradingView 스타일 캔들 + 거래량 + 고래 진입/청산 마커"""
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                        row_heights=[0.78, 0.22], vertical_spacing=0.02)
+
+    fig.add_candlestick(
+        x=cd.t, open=cd.o, high=cd.h, low=cd.l, close=cd.c,
+        increasing=dict(line=dict(color=UP, width=1), fillcolor=UP),
+        decreasing=dict(line=dict(color=DN, width=1), fillcolor=DN),
+        name=coin, showlegend=False,
+        hovertext=[f"O {o:,.1f}  H {h:,.1f}  L {l:,.1f}  C {c:,.1f}"
+                   for o, h, l, c in zip(cd.o, cd.h, cd.l, cd.c)],
+        hoverinfo="text+x", row=1, col=1)
+
+    # 거래량 (캔들 방향 색상)
+    vcol = np.where(cd.c >= cd.o, UP_F, DN_F)
+    fig.add_bar(x=cd.t, y=cd.v, marker_color=vcol, marker_line_width=0,
+                name="거래량", showlegend=False,
+                hovertemplate="거래량 %{y:,.1f}<extra></extra>", row=2, col=1)
 
     lo, hi = cd.l.min(), cd.h.max()
-    pad = (hi - lo) * 0.06
+    pad = (hi - lo) * 0.07
 
+    # ── 고래 마커 ──
     if ev is not None and len(ev):
         e = ev[ev.ts >= cd.t.min()].copy()
         if len(e):
             e["ntl"] = e.delta.abs() * e.mark
             e["slot"] = e.ts.dt.floor(_FLOOR.get(freq, "1h"))
             e["grp"] = np.where(e.kind.isin(["OPEN", "ADD"]), "진입", "청산")
-            # 같은 시각·방향·유형은 하나로 합쳐 마커 뭉침 방지
             g = (e.groupby(["slot", "side", "grp"])
                    .agg(ntl=("ntl", "sum"), n=("addr", "nunique"),
                         sz=("delta", "sum"), px=("mark", "first")).reset_index())
             g = g.merge(cd[["t", "h", "l"]], left_on="slot", right_on="t", how="left")
             g["h"] = g.h.fillna(g.px); g["l"] = g.l.fillna(g.px)
 
-            spec = [("진입", "LONG", "triangle-up", UP, "롱 진입", -0.30),
-                    ("청산", "LONG", "x", WHITE, "롱 청산/축소", -0.78),
-                    ("진입", "SHORT", "triangle-down", DN, "숏 진입", +0.30),
-                    ("청산", "SHORT", "x", GOLD, "숏 청산/축소", +0.78)]
-            for grp, side, sym, col, nm, off in spec:
+            for grp, side, sym, col, nm, off in [
+                    ("진입", "LONG", "triangle-up", UP, "롱 진입", -0.28),
+                    ("청산", "LONG", "x", WHITE, "롱 청산/축소", -0.72),
+                    ("진입", "SHORT", "triangle-down", DN, "숏 진입", +0.28),
+                    ("청산", "SHORT", "x", GOLD, "숏 청산/축소", +0.72)]:
                 q = g[(g.grp == grp) & (g.side == side)]
                 if q.empty:
                     continue
@@ -83,38 +98,69 @@ def price_chart(coin, cd, ev, pos, mark, height=560, freq="1h"):
                 fig.add_scatter(
                     x=q.slot, y=y, mode="markers", name=nm,
                     marker=dict(symbol=sym, size=_size(q.ntl), color=col,
-                                line=dict(width=1.2, color="rgba(0,0,0,0.55)")),
+                                line=dict(width=1.2, color=BG)),
                     customdata=np.c_[q.n, q.ntl / 1e6, q.sz.round(2)],
-                    hovertemplate=("<b>" + nm + "</b>  %{x|%m-%d %H:%M}<br>"
+                    hovertemplate=("<b>" + nm + "</b><br>"
                                    "고래 %{customdata[0]}명 · $%{customdata[1]:.2f}M<br>"
-                                   "순변화 %{customdata[2]} " + coin + "<extra></extra>"))
+                                   "순변화 %{customdata[2]} " + coin + "<extra></extra>"),
+                    row=1, col=1)
 
+    # ── 고래 평균 진입가 ──
     if pos is not None and len(pos):
-        for g2, col, nm in [(pos[pos.szi > 0], UP, "롱 평균진입"),
-                            (pos[pos.szi < 0], DN, "숏 평균진입")]:
+        for g2, col, nm in [(pos[pos.szi > 0], UP, "롱 평균"),
+                            (pos[pos.szi < 0], DN, "숏 평균")]:
             if not len(g2):
                 continue
             w = (g2.entryPx * g2.szi.abs()).sum() / g2.szi.abs().sum()
             if lo - pad < w < hi + pad:
-                fig.add_hline(y=w, line=dict(color=col, dash="dot", width=1.5),
-                              annotation_text=f"{nm} ${w:,.0f}",
-                              annotation_position="top left",
-                              annotation_font=dict(size=11, color=col))
+                fig.add_hline(y=w, line=dict(color=col, dash="dot", width=1.2),
+                              row=1, col=1)
+                fig.add_annotation(x=1.001, xref="paper", y=w, yref="y",
+                                   text=f" {nm} {w:,.0f}", showarrow=False,
+                                   xanchor="left", font=dict(size=10, color=BG),
+                                   bgcolor=col, borderpad=2)
 
-    fig.add_hline(y=mark, line=dict(color="white", dash="dash", width=1.2),
-                  annotation_text=f"현재 ${mark:,.0f}",
-                  annotation_position="top left",
-                  annotation_font=dict(size=12, color="white"))
+    # ── 마지막 가격선 + 배지 (TradingView 방식) ──
+    last_up = cd.c.iloc[-1] >= cd.o.iloc[-1]
+    lc = UP if last_up else DN
+    fig.add_hline(y=mark, line=dict(color=lc, dash="dash", width=1), row=1, col=1)
+    fig.add_annotation(x=1.001, xref="paper", y=mark, yref="y",
+                       text=f" {mark:,.1f} ", showarrow=False, xanchor="left",
+                       font=dict(size=11, color="#fff"), bgcolor=lc, borderpad=3)
 
-    fig.update_layout(height=height, margin=dict(l=8, r=20, t=44, b=8),
-                      title=dict(text=f"{coin} 가격 · 고래 진입/청산 지점", x=0.01,
-                                 font=dict(size=15)),
-                      hovermode="closest", xaxis_rangeslider_visible=False,
-                      legend=dict(orientation="h", yanchor="bottom", y=1.0, x=0.28,
-                                  bgcolor="rgba(0,0,0,0)", font=dict(size=11)),
-                      **BASE)
-    fig.update_yaxes(range=[lo - pad, hi + pad], gridcolor=GRID, tickformat=",.0f")
-    fig.update_xaxes(gridcolor=GRID)
+    o, h, l, c = cd.o.iloc[-1], cd.h.iloc[-1], cd.l.iloc[-1], cd.c.iloc[-1]
+    chg = (c / o - 1) * 100
+    fig.add_annotation(
+        x=0, y=1, xref="paper", yref="paper", xanchor="left", yanchor="bottom",
+        showarrow=False, align="left", font=dict(size=12, color=TXT),
+        text=(f"<b>{coin}</b>  ·  {freq}    "
+              f"O <span style='color:{lc}'>{o:,.1f}</span>  "
+              f"H <span style='color:{lc}'>{h:,.1f}</span>  "
+              f"L <span style='color:{lc}'>{l:,.1f}</span>  "
+              f"C <span style='color:{lc}'>{c:,.1f}</span>  "
+              f"<span style='color:{lc}'>{chg:+.2f}%</span>"))
+
+    fig.update_layout(
+        height=height, margin=dict(l=6, r=104, t=44, b=6),
+        hovermode="x unified", dragmode="pan", bargap=0.15,
+        legend=dict(orientation="h", yanchor="bottom", y=1.0, x=0.42,
+                    bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+        hoverlabel=dict(bgcolor="#1e222d", bordercolor=GRID,
+                        font=dict(color=TXT, size=11)),
+        xaxis_rangeslider_visible=False, **BASE)
+
+    # TradingView식 축: 우측 가격축 + 십자선
+    fig.update_yaxes(side="right", gridcolor=GRID, zeroline=False,
+                     showspikes=True, spikemode="across", spikethickness=1,
+                     spikedash="dot", spikecolor=CROSS,
+                     range=[lo - pad, hi + pad], tickformat=",.0f", row=1, col=1)
+    fig.update_yaxes(side="right", gridcolor=GRID, zeroline=False,
+                     showticklabels=True, nticks=3, row=2, col=1)
+    fig.update_xaxes(gridcolor=GRID, showspikes=True, spikemode="across",
+                     spikethickness=1, spikedash="dot", spikecolor=CROSS,
+                     rangeslider_visible=False, row=1, col=1)
+    fig.update_xaxes(gridcolor=GRID, showspikes=True, spikemode="across",
+                     spikethickness=1, spikedash="dot", spikecolor=CROSS, row=2, col=1)
     return fig
 
 
