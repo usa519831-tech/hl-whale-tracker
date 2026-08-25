@@ -21,7 +21,9 @@ import requests
 
 API = "https://api.hyperliquid.xyz/info"
 LB = "https://stats-data.hyperliquid.xyz/Mainnet/leaderboard"
-DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+# DATA_DIR 를 주면 그쪽에 저장 — 로컬 테스트가 git 추적 data/ 를 더럽히지 않게 함
+DATA = os.getenv("DATA_DIR") or os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "data")
 COINS = [c.strip() for c in os.getenv("COINS", "BTC,ETH,SOL").split(",") if c.strip()]
 MIN_VALUE = float(os.getenv("MIN_VALUE", "5e6"))
 MAX_ACCOUNTS = int(os.getenv("MAX_ACCOUNTS", "800"))
@@ -116,7 +118,10 @@ def main():
     os.makedirs(DATA, exist_ok=True)
     ts = datetime.now(timezone.utc).replace(microsecond=0)
     print(f"[{ts:%Y-%m-%d %H:%M} UTC] 수집 시작  종목={COINS}  "
-          f"기준 ${MIN_VALUE/1e6:.0f}M")
+          f"기준 ${MIN_VALUE/1e6:.0f}M  →  {DATA}")
+    if not os.getenv("CI") and not os.getenv("DATA_DIR"):
+        print("  ※ 로컬 실행이 git 추적 data/ 를 수정합니다. "
+              "테스트라면 DATA_DIR=/tmp/hl 로 지정하세요.")
 
     lb = leaderboard()
     sel = lb[lb.av >= MIN_VALUE].head(MAX_ACCOUNTS)
