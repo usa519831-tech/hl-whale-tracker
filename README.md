@@ -99,6 +99,16 @@ python collector.py                       # 스냅샷 1회
 streamlit run app.py                      # 대시보드
 ```
 
+## 번역기 (부록)
+
+`translator.py` 에 한국어 ↔ 일본어 번역기가 별도로 포함되어 있습니다.
+고래 추적 기능과는 무관한 독립 도구이며, 입력 언어를 자동 감지해
+반대 언어로 번역합니다 (Google 번역 기반, API 키 불필요).
+
+```bash
+streamlit run translator.py
+```
+
 ## 주의
 
 - 온체인 공개 데이터입니다. 매매 신호가 아니라 **상황 인식 도구**입니다
